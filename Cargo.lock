@@ -1,0 +1,4 @@
+[root]
+name = "dnsproxy"
+version = "0.1.0"
+
