@@ -10,6 +10,12 @@ struct DomainRecord {
     domain: Regex
 }
 
+struct DnsQuestion {
+    domain: String,
+    qtype: u16,
+    qclass: u16
+}
+
 struct DnsMessageHeader {
     id: u16,
     flags: u16,
@@ -38,7 +44,7 @@ fn parse_domain_label(input: &[u8]) -> Option<(usize, &str)> {
     }   
 }
 
-fn parse_message(input: &[u8]) -> Option<(&[u8], String)> {
+fn parse_message(input: &[u8]) -> Option<(&[u8], DnsQuestion)> {
     let mut labels = Vec::new();
     let mut consumed = 12; 
 
@@ -61,11 +67,38 @@ fn parse_message(input: &[u8]) -> Option<(&[u8], String)> {
         labels.push(label);
     }
 
-    return Some((&input[consumed + 1..], labels.join(".")));
+    let question = DnsQuestion {
+        domain: labels.join("."),
+        qtype: mk_u16(input, consumed + 1),
+        qclass: mk_u16(input, consumed + 3)
+    };
+
+    return match question.qtype {
+        0x01 | 0x1C => Some((&input[..consumed+5], question)),
+        _ => None
+    }
 }
 
-fn create_answer(base: &[u8], record: &DomainRecord) -> [u8] {
+fn create_message(base: &[u8], record: &DomainRecord) -> Result<Vec<u8>, &'static str> {
+    let rtype = 0x01; // Hardcode IPv4 for now
+    let rlen = 0x04; // ^
 
+    let header = [ 0x80, 0, 0, 1, 0, 1, 0, 0, 0, 0 ];
+    let answer = [ 0xC0, 0x0C, 0, rtype, 0, 1, 0, 0, 0x07, 0xD0, 0, rlen ];
+    let mut message = base.to_vec();
+
+    &message[2..12].copy_from_slice(&header);
+
+    // Add the answer after the question
+    message.extend_from_slice(&answer);
+
+    // Append the IP address
+    if let IpAddr::V4(v4) = record.dest {
+        message.extend_from_slice(&v4.octets());
+        return Ok(message);
+    }
+    
+    return Err("Supplied IP address protocol is not currently supported");
 }
 
 fn main() {
@@ -73,7 +106,7 @@ fn main() {
     let slave = UdpSocket::bind("0.0.0.0:0").unwrap();
 
     let records = vec![
-        DomainRecord { dest: "192.168.56.102".parse().unwrap(), domain: Regex::new(".+\\.dev\\.io").unwrap() },
+        DomainRecord { dest: "192.168.56.103".parse().unwrap(), domain: Regex::new(".+\\.dev\\.io").unwrap() },
     ];
 
     loop {
@@ -81,10 +114,11 @@ fn main() {
         let (len, client) = master.recv_from(&mut buffer).unwrap();
         println!("received!");
 
-        if let Some((msg, domain)) = parse_message(&buffer[..len]) {
-            if let Some(record) = records.iter().find(|r| r.is_match(&domain)) {
+        if let Some((msg, question)) = parse_message(&buffer[..len]) {
+            if let Some(record) = records.iter().find(|r| r.is_match(&question.domain)) {
                 // Found a matching wildcard, forward it on
-                let response = create_answer(&msg, &record);
+                println!("returning match");
+                let response = create_message(&msg, &record).unwrap();
                 master.send_to(&response, client).expect("Failed to send response to client");
                 continue;
             }
