@@ -2,7 +2,7 @@ extern crate regex;
 
 use std::str;
 use std::net::IpAddr;
-use regex::Regex;
+use self::regex::Regex;
 use dnsproxy::Interceptor;
 
 const DNS_HEADER_SIZE: usize = 12;
@@ -51,8 +51,14 @@ impl Header {
     }
 }
 
+impl DnsInterceptor {
+    pub fn new(records: Vec<ResourceRecord>) -> DnsInterceptor {
+        return DnsInterceptor { records: records };
+    }
+}
+
 impl Interceptor for DnsInterceptor {
-    fn overwrite(&self, datagram: &[u8]) -> Option<&[u8]> {
+    fn intercept(&self, datagram: &[u8]) -> Option<Vec<u8>> {
         return parse_message(datagram).and_then(|(msg,question)| 
             self.records.iter().find(|r| r.name.satisfies_query(&question.qname))
                 .and_then(|record| Some(create_message(msg, record)))
@@ -106,7 +112,7 @@ fn parse_message(input: &[u8]) -> Option<(&[u8], Question)> {
     }
 }
 
-fn create_message<'a>(base: &[u8], record: &ResourceRecord) -> &'a [u8] {
+fn create_message(base: &[u8], record: &ResourceRecord) -> Vec<u8> {
     let rtype = 0x01; // Hardcode IPv4 for now (A record)
     let rlen = 0x04; // ^
 
@@ -129,5 +135,5 @@ fn create_message<'a>(base: &[u8], record: &ResourceRecord) -> &'a [u8] {
         message.extend_from_slice(&v4.octets());
     }
     
-    return &message[..];
+    return message;
 }

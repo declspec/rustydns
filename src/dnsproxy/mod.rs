@@ -1,8 +1,6 @@
-
-use std::net::{ToSocketAddrs,UdpSocket};
-
 pub use self::relay::{UdpRelay,Interceptor};
-pub use self::interceptor::DnsInterceptor;
+pub use self::interceptor::{ResourceRecord,NamePattern,DnsInterceptor};
 
 mod relay;
 mod interceptor;
+mod parser;

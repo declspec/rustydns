@@ -3,9 +3,7 @@ use std::net::UdpSocket;
 use std::io::Error;
 
 pub trait Interceptor {
-    fn incoming(&self, _: &[u8]) -> Option<&[u8]> { None }
-    fn outgoing(&self, _: &[u8]) -> Option<&[u8]> { None }
-    fn overwrite(&self, _: &[u8]) -> Option<&[u8]> { None }
+    fn intercept(&self, _: &[u8]) -> Option<Vec<u8>> { None }
 }
 
 pub struct DefaultInterceptor;
@@ -17,11 +15,11 @@ pub struct UdpRelay<A: ToSocketAddrs, I: Interceptor> {
 }
 
 impl<A: ToSocketAddrs, I: Interceptor> UdpRelay<A, I> {
-    fn new(target: A, interceptor: I) -> UdpRelay<A, I> {
+    pub fn new(target: A, interceptor: I) -> UdpRelay<A, I> {
         return UdpRelay { target: target, interceptor: interceptor }
     }
 
-    fn listen(&self, addr: A, capacity: usize) -> Result<(), Error> {
+    pub fn listen(&self, addr: A, capacity: usize) -> Result<(), Error> {
         let master = try!(UdpSocket::bind(addr));
         let slave = try!(UdpSocket::bind("0.0.0.0:0"));
 
@@ -32,21 +30,16 @@ impl<A: ToSocketAddrs, I: Interceptor> UdpRelay<A, I> {
 
         loop {
             let (len, client) = try!(master.recv_from(&mut ibuffer));
-            let received = &ibuffer[..len];
-            let incoming = self.interceptor.incoming(received).unwrap_or(received);
-            
-            // If no overwrite occurred, relay the request
-            let response = match self.interceptor.overwrite(incoming) {
-                Some(val) => val,
-                None => {
-                    try!(slave.send_to(incoming, &self.target));
-                    let (len, _) = try!(slave.recv_from(&mut obuffer));
-                    &obuffer[..len]
-                }
-            };
+            let received = &ibuffer[..len]; 
 
-            let outgoing = self.interceptor.outgoing(response).unwrap_or(response);
-            try!(master.send_to(outgoing, client));
+            if let Some(vec) = self.interceptor.intercept(received) {
+                try!(master.send_to(&vec, client));
+            }
+            else {
+                try!(slave.send_to(received, &self.target));
+                let (len, _) = try!(slave.recv_from(&mut obuffer));
+                try!(master.send_to(&obuffer[..len], client));
+            }
         }
     }
 }
